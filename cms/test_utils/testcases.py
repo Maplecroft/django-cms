@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from cms.models import Page
-from cms.test_utils.util.context_managers import (UserLoginContext, 
+from cms.test_utils.util.context_managers import (UserLoginContext,
     SettingsOverride)
 from django.conf import settings
 from django.contrib.auth.models import User, AnonymousUser
@@ -8,13 +8,14 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.core.urlresolvers import reverse
 from django.template.context import Context
 from django.test import testcases
-from django.test.client import Client, RequestFactory
+from django.test.client import RequestFactory
 from django.utils.translation import activate
 from menus.menu_pool import menu_pool
 from urlparse import urljoin
 import sys
 import urllib
 import warnings
+from cms.utils.permissions import set_current_user
 
 
 URL_CMS_PAGE = "/en/admin/cms/page/"
@@ -23,6 +24,7 @@ URL_CMS_PAGE_CHANGE = urljoin(URL_CMS_PAGE, "%d/")
 URL_CMS_PAGE_DELETE = urljoin(URL_CMS_PAGE_CHANGE, "delete/")
 URL_CMS_PLUGIN_ADD = urljoin(URL_CMS_PAGE_CHANGE, "add-plugin/")
 URL_CMS_PLUGIN_EDIT = urljoin(URL_CMS_PAGE_CHANGE, "edit-plugin/")
+URL_CMS_PLUGIN_MOVE = urljoin(URL_CMS_PAGE_CHANGE, "move-plugin/")
 URL_CMS_PLUGIN_REMOVE = urljoin(URL_CMS_PAGE_CHANGE, "remove-plugin/")
 URL_CMS_TRANSLATION_DELETE = urljoin(URL_CMS_PAGE_CHANGE, "delete-translation/")
 
@@ -75,8 +77,8 @@ class CMSTestCase(testcases.TestCase):
     def _fixture_setup(self):
         super(CMSTestCase, self)._fixture_setup()
         self.create_fixtures()
-        self.client = Client()
         activate("en")
+
 
     def create_fixtures(self):
         pass
@@ -85,6 +87,7 @@ class CMSTestCase(testcases.TestCase):
         # Needed to clean the menu keys cache, see menu.menu_pool.clear()
         menu_pool.clear()
         super(CMSTestCase, self)._post_teardown()
+        set_current_user(None)
 
     def login_user_context(self, user):
         return UserLoginContext(self, user)
@@ -149,14 +152,14 @@ class CMSTestCase(testcases.TestCase):
             return qs.get(**filter)
         except ObjectDoesNotExist:
             pass
-        raise self.failureException, "ObjectDoesNotExist raised"
+        raise self.failureException, "ObjectDoesNotExist raised for filter %s" % filter
 
     def assertObjectDoesNotExist(self, qs, **filter):
         try:
             qs.get(**filter)
         except ObjectDoesNotExist:
             return
-        raise self.failureException, "ObjectDoesNotExist not raised"
+        raise self.failureException, "ObjectDoesNotExist not raised for filter %s" % filter
 
     def copy_page(self, page, target_page):
         from cms.utils.page import get_available_slug
@@ -173,7 +176,7 @@ class CMSTestCase(testcases.TestCase):
         self.assertEquals(response.status_code, 200)
         # Altered to reflect the new django-js jsonified response messages
         self.assertEquals(response.content, '{"status": 200, "content": "ok"}')
-        
+
         title = page.title_set.all()[0]
         copied_slug = get_available_slug(title)
 
@@ -261,21 +264,6 @@ class CMSTestCase(testcases.TestCase):
                 continue
             self.assertEqual(sibling.id,
                 public_siblings[i - skip].publisher_draft.id)
-
-    def request_moderation(self, page, level):
-        """Assign current logged in user to the moderators / change moderation
-
-        Args:
-            page: Page on which moderation should be changed
-
-            level <0, 7>: Level of moderation,
-                1 - moderate page
-                2 - moderate children
-                4 - moderate descendants
-                + combinations
-        """
-        response = self.client.post("/en/admin/cms/page/%d/change-moderation/" % page.id, {'moderate': level})
-        self.assertEquals(response.status_code, 200)
 
     def failUnlessWarns(self, category, message, f, *args, **kwargs):
         warningsShown = []

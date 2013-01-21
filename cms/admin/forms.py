@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
+from cms import constants
 from cms.apphook_pool import apphook_pool
 from cms.forms.widgets import UserSelectAdminWidget
 from cms.models import (Page, PagePermission, PageUser, ACCESS_PAGE, 
     PageUserGroup)
+from cms.utils.conf import get_cms_setting
 from cms.utils.i18n import get_language_tuple, get_language_list
 from cms.utils.mail import mail_page_user_change
 from cms.utils.page import is_valid_page_slug
@@ -11,7 +13,6 @@ from cms.utils.permissions import (get_current_user, get_subordinate_users,
     get_subordinate_groups)
 from cms.utils.urlutils import any_path_re
 from django import forms
-from django.conf import settings
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import Permission, User
 from django.contrib.contenttypes.models import ContentType
@@ -79,11 +80,11 @@ class PageAddForm(forms.ModelForm):
         self.fields['language'].choices = languages
         if not self.fields['language'].initial:
             self.fields['language'].initial = get_language()
-        if self.fields['parent'].initial and \
-            settings.CMS_TEMPLATE_INHERITANCE_MAGIC in \
-            [name for name, value in settings.CMS_TEMPLATES]:
+        if (self.fields['parent'].initial and
+            get_cms_setting('TEMPLATE_INHERITANCE') in
+            [name for name, value in get_cms_setting('TEMPLATES')]):
             # non-root pages default to inheriting their template
-            self.fields['template'].initial = settings.CMS_TEMPLATE_INHERITANCE_MAGIC
+            self.fields['template'].initial = constants.TEMPLATE_INHERITANCE_MAGIC
         
     def clean(self):
         cleaned_data = self.cleaned_data
@@ -104,6 +105,9 @@ class PageAddForm(forms.ModelForm):
         except Site.DoesNotExist:
             site = None
             raise ValidationError("No site found for current settings.")
+
+        if parent and parent.site != site:
+            raise ValidationError("Site doesn't match the parent's page site")
         
         if site and not is_valid_page_slug(page, parent, lang, slug, site):
             self._errors['slug'] = ErrorList([_('Another page with this slug already exists')])
@@ -113,7 +117,7 @@ class PageAddForm(forms.ModelForm):
             #AdminFormsTests.test_clean_overwrite_url validates the form with when no page instance available
             #Looks like just a theoretical corner case
             title = page.get_title_obj(lang)
-            if title:
+            if title and slug:
                 oldslug = title.slug
                 title.slug = slug
                 title.save()
@@ -122,8 +126,9 @@ class PageAddForm(forms.ModelForm):
                 except ValidationError,e:
                     title.slug = oldslug
                     title.save()
-                    del cleaned_data['published']
-                    self._errors['published'] = ErrorList(e.messages)
+                    if 'slug' in cleaned_data:
+                        del cleaned_data['slug']
+                    self._errors['slug'] = ErrorList(e.messages)
         return cleaned_data
     
     def clean_slug(self):
@@ -149,11 +154,7 @@ class PageForm(PageAddForm):
         help_text=_('Hook application to this page.'))
     overwrite_url = forms.CharField(label=_('Overwrite URL'), max_length=255, required=False,
         help_text=_('Keep this field empty if standard path should be used.'))
-    # moderation state
-    moderator_state = forms.IntegerField(widget=forms.HiddenInput, required=False, initial=Page.MODERATOR_CHANGED) 
-    # moderation - message is a fake field
-    moderator_message = forms.CharField(max_length=1000, widget=forms.HiddenInput, required=False)
-    
+
     redirect = forms.CharField(label=_('Redirect'), max_length=255, required=False,
         help_text=_('Redirects to this URL.'))
     meta_description = forms.CharField(label='Description meta tag', required=False, widget=forms.Textarea,
