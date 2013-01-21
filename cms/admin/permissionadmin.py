@@ -45,6 +45,15 @@ class PagePermissionInlineAdmin(TabularInline):
     exclude = ['can_view']
     extra = 0 # edit page load time boost
     
+    def __getattribute__(self, name):
+        # Dynamically set raw_id_fields based on settings
+        if name == 'raw_id_fields':
+            if hasattr(settings, 'CMS_RAW_ID_USERS') and settings.CMS_RAW_ID_USERS:
+                return ['user']
+            return []
+        else:
+            return super(PagePermissionInlineAdmin, self).__getattribute__(name)
+
     def queryset(self, request):
         """
         Queryset change, so user with global change permissions can see

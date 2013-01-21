@@ -10,7 +10,7 @@ from cms.utils.mail import mail_page_user_change
 from cms.utils.page import is_valid_page_slug
 from cms.utils.page_resolver import get_page_from_path, is_valid_url
 from cms.utils.permissions import (get_current_user, get_subordinate_users, 
-    get_subordinate_groups)
+    get_subordinate_groups, get_user_permission_level)
 from cms.utils.urlutils import any_path_re
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
@@ -193,14 +193,45 @@ class PagePermissionInlineAdminForm(forms.ModelForm):
     level or under him in choosen page tree, and users which were created by him, 
     but aren't assigned to higher page level than current user.
     """
-    user = forms.ModelChoiceField('user', label=_('user'), widget=UserSelectAdminWidget, required=False)
     page = forms.ModelChoiceField(Page, label=_('user'), widget=HiddenInput(), required=True)
     
     def __init__(self, *args, **kwargs):
         super(PagePermissionInlineAdminForm, self).__init__(*args, **kwargs)
         user = get_current_user() # current user from threadlocals
-        self.fields['user'].queryset = get_subordinate_users(user)
-        self.fields['user'].widget.user = user # assign current user
+        sub_users = get_subordinate_users(user)
+
+        limit_choices = True
+        use_raw_id = False
+        if getattr(settings, 'CMS_RAW_ID_USERS', False):
+            if sub_users.count() < 500:
+                # If there aren't too many users, proceed as normal and use a raw
+                # id field with limit_choices_to
+                limit_choices = True
+                use_raw_id = True
+            elif get_user_permission_level(user) == 0:
+                # If there are enough choices to possibly cause a 414 request
+                # URI too large error, we only proceed with the raw id field if
+                # the user is a superuser & thus can legitimately circumvent
+                # the limit_choices_to condition.
+                limit_choices = False
+                use_raw_id = True
+
+        # We can't use the fancy custom widget if the admin form wants to use a
+        # raw id field for the user
+        if use_raw_id:
+            # We can't set a queryset on a raw id lookup, but we can use the
+            # fact that it respects the limit_choices_to parameter.
+            from django.contrib.admin.widgets import ForeignKeyRawIdWidget
+            if isinstance(self.fields['user'].widget, ForeignKeyRawIdWidget):
+                if limit_choices:
+                    self.fields['user'].widget.rel.limit_choices_to = dict(
+                        id__in=list(sub_users.values_list('pk', flat=True))
+                    )
+        else:
+            self.fields['user'].widget = UserSelectAdminWidget()
+            self.fields['user'].queryset = sub_users
+            self.fields['user'].widget.user = user # assign current user
+
         self.fields['group'].queryset = get_subordinate_groups(user)
     
     def clean(self):
